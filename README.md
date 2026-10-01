@@ -1,121 +1,124 @@
-# Orbis hackathon starter!
+# EchoVault
 
-A minimal Next.js example for the public Reactor-hosted Visko Orbis Stable API.
-It demonstrates server-side token minting, WebRTC video and audio, text-to-video,
-optional image-to-video, live prompt steering, delivery resolution, pause,
-resume, and a foldable Nano Banana-to-Orbis livestreaming example.
+**Blockchain records what happened. EchoVault remembers what it felt like.**
 
-## Requirements
+EchoVault is a provenance-aware cinematic memory system built for the Visko Orbis challenge. A user supplies a verified Base or Base Sepolia transaction, directs how that moment should feel, then opens a continuous Visko Orbis world that can be steered live, recorded locally, downloaded, preserved and shared without confusing generated interpretation with blockchain truth.
 
-- Node.js 20.9 or newer
-- A Reactor API key with access to Visko Orbis Stable
-- A Google Gemini API key with access to Nano Banana
+## What makes it different
+
+EchoVault has two deliberately separate layers:
+
+- **Proof** — transaction hash, chain, block, addresses, value, receipt status, logs and event classification read from the blockchain.
+- **Memory** — title, creative interpretation, cinematic direction, audio direction and Orbis-generated video.
+
+Claude can help turn verified facts into stronger cinematic language, but its server prompt explicitly forbids invented blockchain facts. If Claude is not configured or is unavailable, EchoVault falls back to a deterministic local interpretation and prompt composer so the core product still works.
+
+## Product flow
+
+1. **Event Excavation** — choose Base Sepolia or Base and paste a transaction hash.
+2. **Verified Evidence** — server-side JSON-RPC reads the transaction, receipt and block and classifies the event.
+3. **Director Console** — choose mood, camera, world language, energy, custom direction, sound and an optional 16:9 reference image.
+4. **Claude direction** — optional provenance-safe interpretation and prompt refinement.
+5. **The Forge** — connect to `reactor/visko-orbis-stable`, stage resolution/seed/audio/image/prompt and start the live stream.
+6. **Live steering** — send new `set_prompt` directions while the same shot continues.
+7. **Preserve** — record the live media element in supported browsers using `MediaRecorder`, download WebM, export a poster and provenance JSON, or save the Echo and capture in IndexedDB.
+8. **Share** — generate a portable `/echo?data=...` proof page that re-reads the source transaction when opened, then open a prefilled X share.
+9. **Remix** — load a saved Echo back into the Director Console while preserving the same verified source event.
+
+## Tech
+
+- Next.js 16 + React 19 + TypeScript
+- Reactor JavaScript SDK
+- Visko Orbis Stable
+- Base / Base Sepolia JSON-RPC
+- Anthropic Messages API (optional, server-side)
+- IndexedDB for local Echo/video preservation
+- MediaRecorder + `HTMLMediaElement.captureStream()` for local live-stream capture on supported browsers
+- Zero UI framework and zero animation library: the interface and motion system are custom CSS/React
+
+## Environment
+
+```bash
+cp .env.example .env.local
+```
+
+Set:
+
+```dotenv
+REACTOR_API_KEY=your_reactor_api_key
+CLAUDE_API_KEY=your_claude_api_key
+CLAUDE_MODEL=claude-sonnet-5-5
+```
+
+`REACTOR_API_KEY` is required for generation. `CLAUDE_API_KEY` is optional but recommended. Both remain server-side.
 
 ## Run locally
 
 ```bash
-cp .env.example .env.local
-# Add your Reactor API key to .env.local.
 npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>.
+Open `http://localhost:3000`.
 
-`npm run dev` starts Next.js through a small session-cleanup wrapper. While in
-development, sessions created by this starter are recorded in the gitignored
-`.reactor-dev-sessions.json` file. It contains session IDs and metadata, but no
-API keys or JWTs. The wrapper uses the server-only `REACTOR_API_KEY` to delete
-recorded sessions before startup and again on `Ctrl+C`/`SIGTERM`, so restarting
-the dev server cannot silently leave a previous Orbis session consuming
-capacity. If a startup sweep cannot delete a recorded session, the wrapper
-refuses to start another dev server and reports the session ID.
+For production verification:
 
-Set both keys in `.env.local`:
-
-```dotenv
-REACTOR_API_KEY=your_reactor_api_key
-GEMINI_API_KEY=your_gemini_api_key
+```bash
+npm run typecheck
+npm run build
+npm start
 ```
 
-Keep both keys server-side. The browser receives only the short-lived Reactor
-JWT and the image returned by the Nano Banana route.
+## Orbis integration
 
-## Nano Banana kickoff example
+EchoVault preserves the starter's important Reactor safety model:
 
-Connect to Orbis, expand **Livestreaming example**, and click
-**Edit and start stream**. The bundled `dog.png` is displayed as the source
-image. The server sends it with the displayed image-editing prompt to
-`gemini-2.5-flash-image`. Gemini then analyzes the edited image with the user
-prompt and returns a plain-text, image-grounded prompt. The
-edited output is previewed, uploaded as the Orbis start image, and used with
-that grounded prompt to begin the stream.
+- Reactor API key stays server-side.
+- `/api/token` mints a short-lived JWT scoped to Orbis Stable.
+- The browser connects with `autoConnect: false`.
+- Development sessions are registered and swept by the included cleanup wrapper.
+- Page exit sends best-effort session cleanup.
+- The video/audio receiver mounts as soon as Reactor is connected so it is ready before generation starts.
+- `state.available_resolutions` is treated as the authoritative resolution list.
+- A transaction-derived deterministic seed is staged before `start`.
+- `set_audio_prompt` is kept separate from the visual prompt.
+- Live steering uses `set_prompt` during an active generation.
 
-The two starting prompts are exported from `lib/nano-banana.ts`.
-`NANO_BANANA_PROMPT` controls the image edit, while `ORBIS_KICKOFF_PROMPT`
-describes the requested motion. The final Gemini-grounded prompt is displayed
-before it is sent to Orbis.
+Current model reference: https://www.reactor.inc/models/visko-orbis-stable/api
 
-## API flow
+## Claude integration
 
-1. `POST /api/token` requests a scoped session JWT from
-   `https://api.reactor.inc/tokens`.
-2. `ReactorProvider` connects to `reactor/visko-orbis-stable` with the
-   recv-only `main_video` and `main_audio` tracks.
-3. The model sends a `state` snapshot. Its `state.available_resolutions` list
-   replaces the starter's initial documented resolution choices.
-4. If supplied, the reference image is uploaded and passed to `set_image`
-   before `start`.
-5. If selected, `set_resolution` stages a delivery tier for the next `start`.
-   Omitting it keeps the model's current setting; the documented default is
-   `2k`.
-6. `set_prompt` supplies the required prompt, then `start` begins generation.
-7. Sending another `set_prompt` while running steers the video at the next
-   chunk boundary.
+EchoVault calls the Anthropic Messages API directly from a server route, so no additional client dependency is required. The default model is configurable through `CLAUDE_MODEL` and is currently set to `claude-sonnet-5-5` in `.env.example`.
 
-## Documented model behavior
+Claude performs two optional jobs:
 
-- A prompt is required before `start`; the reference image is optional.
-- A 16:9 reference image works best. Other aspect ratios are resized without
-  cropping and may appear distorted.
-- The starter initially shows the currently documented `1080p`, `2k`, and `4k`
-  tiers. After connection, treat `state.available_resolutions` as authoritative
-  and send the selected value exactly as given.
-- `set_resolution` applies from the next `start`, not during the active run.
-- Orbis emits chunks about every 1.8 seconds. The first chunk emits no frames
-  while the upscaler primes; this is expected.
-- Commands are asynchronous. Use model events such as `state`,
-  `prompt_accepted`, `resolution_accepted`, `generation_started`,
-  `chunk_complete`, and `command_error` as the source of truth.
-- `pause` takes effect after the current chunk. `resume` continues the same
-  generation, and `reset` clears the current prompt and image.
+- produce a concise provenance-safe title/summary/significance plus an Orbis visual prompt and audio caption;
+- refine the user's Director Console choices into a stronger continuous-shot prompt.
 
-## Project files
+The chain facts themselves are never sourced from Claude.
 
-- `app/api/token/route.ts` performs the server-side token exchange.
-- `app/api/session-cleanup/route.ts` performs best-effort session deletion when
-  the browser page exits.
-- `app/api/session-registry/route.ts` records verified development sessions for
-  startup and shutdown cleanup.
-- `scripts/dev-with-session-cleanup.mjs` wraps `next dev` with the development
-  cleanup sweeps.
-- `app/api/nano-banana/route.ts` performs the server-side image edit.
-- `app/api/orbis-prompt/route.ts` creates the image-grounded video prompt.
-- `components/orbis-demo.tsx` composes the provider, player, controls, and demo.
-- `components/orbis-player.tsx` renders the streamed video and audio.
-- `components/orbis-controls.tsx` renders the session controls.
-- `components/nano-banana-example.tsx` owns the kickoff example and source image.
-- `hooks/use-orbis-session.ts` contains the reusable Orbis command sequence and
-  session state.
-- `dog.png` is the Nano Banana source image.
-- `lib/orbis.ts` contains the public model configuration and message helpers.
-- `lib/orbis-prompt.ts` contains the plain-text Gemini grounding instruction.
-- `lib/nano-banana.ts` contains the model and kickoff prompt.
-- `.env.example` documents the required environment variables.
+## Video downloads
 
-For the complete command parameters, message schemas, tracks, and current model
-behavior, use the public Reactor documentation:
+Orbis is a live WebRTC stream. EchoVault does not pretend that a server-rendered video file exists. Instead, on browsers that support `captureStream()` and `MediaRecorder`, the user can record a section of the live output and download the resulting WebM. A saved capture can also be stored in the browser's IndexedDB alongside its Echo metadata.
 
-- [Visko Orbis Stable API](https://www.reactor.inc/models/visko-orbis-stable/api)
-- [Visko Orbis Dynamic API](https://www.reactor.inc/models/visko-orbis-dynamic/api)
-- [Gemini image generation and editing](https://ai.google.dev/gemini-api/docs/image-generation)
+Chrome/Edge are the recommended browsers for this feature.
+
+## Main files
+
+- `components/echovault-app.tsx` — full product experience and orchestration
+- `components/echo-player.tsx` — live Reactor view + recording/download
+- `hooks/use-orbis-session.ts` — resilient Orbis command/session lifecycle
+- `app/api/transaction/route.ts` — verified Base/Base Sepolia transaction reader
+- `app/api/echo-intelligence/route.ts` — Claude + deterministic fallback intelligence
+- `app/api/token/route.ts` — server-side Reactor JWT exchange
+- `lib/echo.ts` — product data model, director logic and share encoding
+- `lib/vault-storage.ts` — IndexedDB persistence
+- `app/echo/page.tsx` — portable proof page
+- `app/about/page.tsx` — product/technical documentation
+- `app/styles.css` — complete EchoVault design and motion system
+
+## Privacy and truth model
+
+EchoVault does not upload saved Echoes or recorded clips to a database. The personal Vault is local to the browser. Portable proof links encode only Echo metadata in the URL and do not include the recorded video. When a shared page opens, it re-reads the source transaction from the selected Base network and compares the live result with the shared metadata before showing a fresh verification state. Users explicitly choose when to download or share media.
+
+Generated cinematic content is an interpretation, not evidence of what happened onchain. The Proof interface makes that distinction visible at all times.

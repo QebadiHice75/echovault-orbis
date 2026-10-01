@@ -1,6 +1,6 @@
 {
-  "name": "orbis-hackathon-starter",
-  "version": "0.1.0",
+  "name": "echovault-orbis",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "node scripts/dev-with-session-cleanup.mjs",
@@ -9,7 +9,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.22.0",
     "@next/env": "^16.3.5",
     "@reactor-team/js-sdk": "^3.0.2",
     "hls.js": "^1.6.13",

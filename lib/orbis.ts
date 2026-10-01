@@ -5,7 +5,8 @@ export const ORBIS_TRACKS = [
   { name: "main_audio", kind: "audio", direction: "recvonly" },
 ] as const;
 
-export const DOCUMENTED_RESOLUTIONS = ["1080p", "2k", "4k"];
+// The connected model's state.available_resolutions is authoritative.
+export const DOCUMENTED_RESOLUTIONS: string[] = [];
 
 export type OrbisMessage = {
   type?: string;

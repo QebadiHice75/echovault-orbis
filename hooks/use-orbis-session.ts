@@ -9,6 +9,13 @@ import {
   unwrapOrbisMessage,
 } from "@/lib/orbis";
 
+type StartConfig = {
+  prompt: string;
+  image?: File | null;
+  seed?: number;
+  audioPrompt?: string;
+};
+
 export function useOrbisSession(
   clearJwt: () => void,
   getCurrentJwt: () => string | null,
@@ -31,8 +38,8 @@ export function useOrbisSession(
   );
   const [muted, setMuted] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [nanoBusy, setNanoBusy] = useState(false);
   const [runStarted, setRunStarted] = useState(false);
+  const [mediaEnabled, setMediaEnabled] = useState(true);
   const [paused, setPaused] = useState(false);
   const [imageStatus, setImageStatus] = useState("");
   const [error, setError] = useState("");
@@ -45,13 +52,9 @@ export function useOrbisSession(
   const expectsImageForRun = useRef(false);
 
   const connected = status === "ready";
-  const controlsBusy = busy || nanoBusy;
 
   useEffect(() => {
-    if (
-      status === "disconnected" &&
-      previousStatus.current !== "disconnected"
-    ) {
+    if (status === "disconnected" && previousStatus.current !== "disconnected") {
       setRunStarted(false);
       setPaused(false);
       setImageStatus("");
@@ -61,40 +64,27 @@ export function useOrbisSession(
 
   useEffect(() => {
     const handlePageHide = (event: PageTransitionEvent) => {
-      // A page entering the back-forward cache is suspended, not closed.
       if (event.persisted || !sessionId) return;
-
       const jwt = getCurrentJwt();
       if (!jwt) return;
-
-      // keepalive asks the browser to finish uploading this small request even
-      // after the document starts unloading. The server then terminates only
-      // the session owned by this session-scoped JWT.
       void fetch("/api/session-cleanup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId, jwt }),
         keepalive: true,
-      }).catch(() => {
-        // The page is leaving, so there is nowhere useful to surface failure.
-      });
+      }).catch(() => undefined);
     };
-
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [getCurrentJwt, sessionId]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development" || !sessionId) {
-      return;
-    }
-
+    if (process.env.NODE_ENV !== "development" || !sessionId) return;
     const jwt = getCurrentJwt();
     if (!jwt) return;
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-
     const register = async (attempt: number) => {
       try {
         const response = await fetch("/api/session-registry", {
@@ -102,31 +92,16 @@ export function useOrbisSession(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId, jwt }),
         });
-        if (!response.ok) {
-          const result = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(
-            result?.error ?? `registry returned ${response.status}`,
-          );
-        }
+        if (!response.ok) throw new Error(`registry returned ${response.status}`);
       } catch (caught) {
         if (cancelled) return;
         if (attempt < 5) {
-          retryTimer = setTimeout(
-            () => void register(attempt + 1),
-            attempt * 1_000,
-          );
+          retryTimer = setTimeout(() => void register(attempt + 1), attempt * 1000);
           return;
         }
-        setError(
-          `Could not register Reactor session for development cleanup: ${
-            caught instanceof Error ? caught.message : String(caught)
-          }`,
-        );
+        setError(`Could not register development cleanup: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     };
-
     void register(1);
     return () => {
       cancelled = true;
@@ -156,23 +131,16 @@ export function useOrbisSession(
     } else if (message.type === "generation_started") {
       setRunStarted(true);
       setPaused(false);
-      if (message.image_conditioned === true) {
-        setImageStatus("Orbis started from this image");
-      } else if (
-        message.image_conditioned === false &&
-        expectsImageForRun.current
-      ) {
-        setImageStatus("Orbis started without image conditioning");
-        setError("Orbis started without the uploaded image.");
+      if (message.image_conditioned === true) setImageStatus("Reference frame locked");
+      if (message.image_conditioned === false && expectsImageForRun.current) {
+        setImageStatus("Started without reference frame");
+        setError("Orbis started without the uploaded reference image.");
       }
     } else if (message.type === "generation_paused") {
       setPaused(true);
     } else if (message.type === "generation_resumed") {
       setPaused(false);
-    } else if (
-      message.type === "generation_complete" ||
-      message.type === "generation_reset"
-    ) {
+    } else if (message.type === "generation_complete" || message.type === "generation_reset") {
       setRunStarted(false);
       setPaused(false);
     }
@@ -185,34 +153,23 @@ export function useOrbisSession(
       conditionsReadyResolver.current?.();
       conditionsReadyResolver.current = null;
     }
-
     if (message.type === "state" && message.has_image === true) {
       imageReadyResolver.current?.();
       imageReadyResolver.current = null;
     }
-
     if (message.type === "state" && message.available_resolutions) {
       const reported = message.available_resolutions.map(String);
       if (reported.length) {
         setAvailableResolutions(reported);
-        setResolution((current) =>
-          !current || reported.includes(current) ? current : "",
-        );
+        setResolution((current) => (!current || reported.includes(current) ? current : ""));
       }
     }
-
     if (!disconnecting.current) updateRunState(message);
-
     if (message.type === "command_error") {
-      setError(
-        `${message.command || "command"}: ${message.reason || "rejected"}`,
-      );
+      setError(`${message.command || "command"}: ${message.reason || "rejected"}`);
       if (message.command === "start") setRunStarted(false);
     }
-
-    if (message.type) {
-      setEvents((current) => [message.type!, ...current].slice(0, 8));
-    }
+    if (message.type) setEvents((current) => [message.type!, ...current].slice(0, 12));
   });
 
   const waitForSignal = (
@@ -224,7 +181,7 @@ export function useOrbisSession(
       timeout = setTimeout(() => {
         resolver.current = null;
         reject(new Error(`Timed out waiting for Orbis ${signalName}.`));
-      }, 15_000);
+      }, 18_000);
       resolver.current = () => {
         clearTimeout(timeout);
         resolve();
@@ -239,12 +196,19 @@ export function useOrbisSession(
     };
   };
 
-  // Shared by the regular form and the Nano Banana one-click example.
-  const startGeneration = async (
-    startImage: File | null,
-    runPrompt: string,
-  ) => {
-    if (!runPrompt.trim()) throw new Error("Enter a prompt before starting.");
+  const startGeneration = async ({
+    prompt: runPrompt,
+    image: startImage = null,
+    seed,
+    audioPrompt = "",
+  }: StartConfig) => {
+    if (!runPrompt.trim()) throw new Error("Add a direction before creating an Echo.");
+    if (runStarted) throw new Error("Reset the current memory before starting another Echo.");
+
+    // Start every Echo from a clean model state so an earlier image/prompt cannot
+    // silently leak into a new verified event. Resolution survives reset by model
+    // design; image, prompt and seed do not.
+    await sendCommand("reset", {});
     expectsImageForRun.current = Boolean(startImage);
 
     if (startImage) {
@@ -253,9 +217,8 @@ export function useOrbisSession(
       const rawReply = await sendCommand("set_image", { image: uploaded });
       if (!rawReply) {
         imageReady.cancel();
-        throw new Error("Orbis did not accept the uploaded start image.");
+        throw new Error("Orbis did not accept the reference image.");
       }
-
       const reply = unwrapOrbisMessage(rawReply);
       if (reply.type === "command_error") {
         imageReady.cancel();
@@ -263,33 +226,27 @@ export function useOrbisSession(
       }
       if (reply.type !== "image_accepted") {
         imageReady.cancel();
-        throw new Error(
-          `Expected image_accepted from Orbis, received ${reply.type || "an unknown reply"}.`,
-        );
+        throw new Error(`Expected image_accepted, received ${reply.type || "an unknown reply"}.`);
       }
-
       await imageReady.promise;
-
-      const dimensions =
-        reply.width && reply.height ? ` (${reply.width}×${reply.height})` : "";
-      setImageStatus(`Orbis accepted image${dimensions}`);
-      setEvents((current) => ["image_accepted", ...current].slice(0, 8));
+      const dimensions = reply.width && reply.height ? ` · ${reply.width}×${reply.height}` : "";
+      setImageStatus(`Reference accepted${dimensions}`);
+      setEvents((current) => ["image_accepted", ...current].slice(0, 12));
     }
 
     if (resolution) await sendCommand("set_resolution", { resolution });
+    if (typeof seed === "number" && Number.isFinite(seed) && seed >= 0) {
+      await sendCommand("set_seed", { seed: Math.floor(seed) });
+    }
+    // Empty explicitly clears a previous run's sound override.
+    await sendCommand("set_audio_prompt", { prompt: audioPrompt.trim() });
 
-    const conditionsReady = waitForSignal(
-      conditionsReadyResolver,
-      "conditions_ready",
-    );
-    const promptReply = await sendCommand("set_prompt", {
-      prompt: runPrompt.trim(),
-    });
+    const conditionsReady = waitForSignal(conditionsReadyResolver, "conditions_ready");
+    const promptReply = await sendCommand("set_prompt", { prompt: runPrompt.trim() });
     if (!promptReply) {
       conditionsReady.cancel();
-      throw new Error("Orbis did not accept the prompt.");
+      throw new Error("Orbis did not accept the cinematic direction.");
     }
-
     const promptMessage = unwrapOrbisMessage(promptReply);
     if (promptMessage.type === "command_error") {
       conditionsReady.cancel();
@@ -297,7 +254,7 @@ export function useOrbisSession(
     }
 
     await conditionsReady.promise;
-    setEvents((current) => ["conditions_ready", ...current].slice(0, 8));
+    setEvents((current) => ["conditions_ready", ...current].slice(0, 12));
     await sendCommand("start", {});
     setRunStarted(true);
     setPaused(false);
@@ -308,32 +265,27 @@ export function useOrbisSession(
     setImageStatus("");
   };
 
-  const startRun = () => runAction(() => startGeneration(image, prompt));
-
-  const startFromNanoOutput = async (
-    editedImage: File,
-    groundedPrompt: string,
-  ) => {
-    setImage(editedImage);
-    setPrompt(groundedPrompt);
-    await runAction(() => startGeneration(editedImage, groundedPrompt));
+  const startRun = () => runAction(() => startGeneration({ prompt, image }));
+  const startWithConfig = async (config: StartConfig) => {
+    setPrompt(config.prompt);
+    if (config.image !== undefined) setImage(config.image);
+    return runAction(() => startGeneration(config));
   };
 
-  const steer = () =>
+  const steerWithPrompt = (nextPrompt?: string) =>
     runAction(async () => {
-      if (!prompt.trim()) throw new Error("Enter a prompt before steering.");
-      await sendCommand("set_prompt", { prompt: prompt.trim() });
+      const value = (nextPrompt ?? prompt).trim();
+      if (!value) throw new Error("Add a direction before steering.");
+      setPrompt(value);
+      await sendCommand("set_prompt", { prompt: value });
     });
 
   const disconnectSession = async () => {
     disconnecting.current = true;
+    setMediaEnabled(false);
     setRunStarted(false);
     setPaused(false);
-
-    // Remove ReactorView before closing the WebRTC tracks it is playing.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve()),
-    );
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
       const disconnected = await runAction(() => disconnect());
       if (disconnected) {
@@ -345,8 +297,7 @@ export function useOrbisSession(
               body: JSON.stringify({ sessionId }),
             });
           } catch {
-            // A stale registry entry is harmless: the next sweep gets a 404
-            // from Reactor and removes it.
+            // The next development cleanup sweep removes stale entries.
           }
         }
         clearJwt();
@@ -356,10 +307,17 @@ export function useOrbisSession(
     }
   };
 
+  const connectSession = () =>
+    runAction(async () => {
+      setMediaEnabled(true);
+      await connect();
+    });
+
   return {
     status,
     connected,
-    controlsBusy,
+    mediaEnabled: connected && mediaEnabled,
+    controlsBusy: busy,
     runStarted,
     paused,
     muted,
@@ -370,16 +328,17 @@ export function useOrbisSession(
     availableResolutions,
     error,
     events,
-    connectSession: () => runAction(() => connect()),
+    connectSession,
     disconnectSession,
     toggleMuted: () => setMuted((current) => !current),
+    setMuted,
     setPrompt,
     selectImage,
     setResolution,
     startRun,
-    startFromNanoOutput,
-    setNanoBusy,
-    steer,
+    startWithConfig,
+    steer: () => steerWithPrompt(),
+    steerWithPrompt,
     pause: () => runAction(() => sendCommand("pause", {})),
     resume: () => runAction(() => sendCommand("resume", {})),
     reset: () => runAction(() => sendCommand("reset", {})),
