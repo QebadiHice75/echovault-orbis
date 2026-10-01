@@ -1,0 +1,5 @@
+[build.environment]
+  # BASE_RPC_URL / BASE_SEPOLIA_RPC_URL may hold the public Base endpoints, which are
+  # also hardcoded as fallbacks in lib/echo.ts. Those are not secrets, so exclude
+  # them from secrets scanning. CLAUDE_API_KEY and REACTOR_API_KEY remain scanned.
+  SECRETS_SCAN_OMIT_KEYS = "BASE_RPC_URL,BASE_SEPOLIA_RPC_URL"
